@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from datetime import datetime
 from db import get_db
+from typing import Optional
 
 app = FastAPI(title="IN-GPS API", version="0.1.0")
 
@@ -13,8 +14,8 @@ app = FastAPI(title="IN-GPS API", version="0.1.0")
 class DummyLogIn(BaseModel):
     device_id: str = Field(..., examples=["DEV_2001"])
     reboot_count: int = 0
-    temp_out_c: float | None = 25.0
-    temp_core_c: float | None = 60.0
+    temp_out_c: Optional[float] = 25.0
+    temp_core_c: Optional[float] = 60.0
     fault_grade: int = 0
 
 
@@ -41,7 +42,7 @@ def list_lines(db: Session = Depends(get_db)):
 
 
 @app.get("/equipments")
-def list_equipments(line_id: str | None = None, db: Session = Depends(get_db)):
+def list_equipments(line_id:Optional[str] = None, db: Session = Depends(get_db)):
     if line_id:
         rows = db.execute(text("""
             SELECT equipment_id, line_id, equipment_name, created_at, updated_at
