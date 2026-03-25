@@ -1,25 +1,31 @@
 # IN-GPS (Server, AWS-ec2)
 
-IN-GPS server 초기버전입니다. python으로 작성했으며 API를 통하여 Mobile로 보낼 예정입니다.
+IN-GPS server 초기버전입니다. 
+현재 Gateway -> Broker(mosquitto) -> Server -> web API(FAST API)
+까지 진해오디었습니다.
 
 ## Project Structure
  - app.py
  - db.py
  - requirement.txt
+ - mqtt_subscriber.py
  - 
 ## Features
-- DummyData 송신 후 로그확인
-- DB검증
-- EC2활용 체크
+- Gateway <-> Broker -> DB -> web API 
 
 
 ## Requirements
 - Python: 3.x.x.x
-- AWS-EC2(서버 필요 시 이예찬에게 말씀해주시면 열어드리겠습니다.)
+- mySql
+- Server always active
+- mosquitto broker
 
+## Check Swagger
+- (http://13.209.92.219:8000/docs#/)
+- 
 ## Build & Flash
-- EC2를 사용하므로 본인말고는 열 수 없음(참고사항)
-- powershell start
+- (EC2 인증서가필요함)
+- windows powershell start
 - ssh -i ingps-key.pem ec2user@ipv4domain
 - cd project directory
 - source .venv/bin/activate
