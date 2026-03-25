@@ -90,6 +90,28 @@ def get_device_logs(device_id: str, limit: int = 200, db: Session = Depends(get_
     return {"items": list(rows)}
 
 
+# ---------- Temperature ----------
+@app.get("/temperature")
+def get_temperature(device_id: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 1000))
+    if device_id:
+        rows = db.execute(text("""
+            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, created_at
+            FROM temperature_log
+            WHERE device_id = :device_id
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {"device_id": device_id, "limit": limit}).mappings().all()
+    else:
+        rows = db.execute(text("""
+            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, created_at
+            FROM temperature_log
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {"limit": limit}).mappings().all()
+    return {"items": list(rows)}
+
+
 # ---------- Dummy write APIs (게이트웨이 없이 테스트) ----------
 @app.post("/debug/bootstrap")
 def bootstrap_minimal(db: Session = Depends(get_db)):
