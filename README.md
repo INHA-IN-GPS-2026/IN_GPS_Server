@@ -2,7 +2,7 @@
 
 IN-GPS server 초기버전입니다. 
 현재 Gateway -> Broker(mosquitto) -> Server -> web API(FAST API)
-까지 진해오디었습니다.
+까지 진행되었습니다.
 
 ## Project Structure
  - app.py
