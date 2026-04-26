@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(grep -E \"\\\\.\\(java|xml\\)$\")",
+      "Bash(./gradlew assembleDebug)",
+      "Read(//c/Program Files/Android/Android Studio/jbr/bin/**)",
+      "Read(//c/Program Files/Android/Android Studio/jre/bin/**)",
+      "Read(//c/Program Files/Android/**)",
+      "Bash(export JAVA_HOME=\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\")",
+      "Bash(export ANDROID_HOME=\"C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk\")",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/emulator/emulator' -list-avds)",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/platform-tools/adb' devices:*)",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/platform-tools/adb' install:*)",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/platform-tools/adb' shell:*)",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/platform-tools/adb' pull:*)",
+      "Bash(xxd)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash('C:\\\\Users\\\\YechanLee\\\\AppData\\\\Local\\\\Android\\\\Sdk/platform-tools/adb' exec-out:*)"
+    ]
+  }
+}

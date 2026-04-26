@@ -19,6 +19,19 @@ class DummyLogIn(BaseModel):
     fault_grade: int = 0
 
 
+class TempLogIn(BaseModel):
+    device_id: str = Field(..., examples=["esp_32"])
+    temp1: float
+    temp2: Optional[float] = None
+    event: str = Field("normal", examples=["normal"], pattern="^(normal|warning|disconnected)$")
+
+
+class TempLogUpdate(BaseModel):
+    temp1: float
+    temp2: Optional[float] = None
+    event: str = Field(..., examples=["normal"], pattern="^(normal|warning|disconnected)$")
+
+
 # ---------- Health ----------
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
@@ -91,12 +104,62 @@ def get_device_logs(device_id: str, limit: int = 200, db: Session = Depends(get_
 
 
 # ---------- Temperature ----------
+@app.get("/temperature/chart")
+def get_temperature_chart(device_id: str, days: int = 1, db: Session = Depends(get_db)):
+    """
+    모바일 차트용 엔드포인트.
+    - days <= 7 : raw 데이터 (분 단위)
+    - days >  7 : 일별 집계 (avg/min/max) → 최대 365개
+    """
+    days = max(1, min(days, 365))
+
+    if days <= 7:
+        rows = db.execute(text("""
+            SELECT id, device_id,
+                   temp1, temp2,
+                   angle_x, angle_y, angle_z,
+                   event, created_at
+            FROM temperature_log
+            WHERE device_id = :device_id
+              AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            ORDER BY created_at DESC
+        """), {"device_id": device_id, "days": days}).mappings().all()
+        return {"items": list(rows), "aggregated": False}
+    else:
+        rows = db.execute(text("""
+            SELECT
+                0                            AS id,
+                device_id,
+                ROUND(AVG(temp1), 2)         AS temp1,
+                ROUND(AVG(temp2), 2)         AS temp2,
+                ROUND(MIN(temp1), 2)         AS temp1_min,
+                ROUND(MAX(temp1), 2)         AS temp1_max,
+                ROUND(MIN(temp2), 2)         AS temp2_min,
+                ROUND(MAX(temp2), 2)         AS temp2_max,
+                NULL                         AS angle_x,
+                NULL                         AS angle_y,
+                NULL                         AS angle_z,
+                CASE
+                    WHEN SUM(CASE WHEN event = 'disconnected' THEN 1 ELSE 0 END) > 0 THEN 'disconnected'
+                    WHEN SUM(CASE WHEN event = 'warning'      THEN 1 ELSE 0 END) > 0 THEN 'warning'
+                    ELSE 'normal'
+                END                          AS event,
+                CONCAT(DATE(created_at), 'T12:00:00') AS created_at
+            FROM temperature_log
+            WHERE device_id = :device_id
+              AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            GROUP BY DATE(created_at), device_id
+            ORDER BY created_at DESC
+        """), {"device_id": device_id, "days": days}).mappings().all()
+        return {"items": list(rows), "aggregated": True}
+
+
 @app.get("/temperature")
 def get_temperature(device_id: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
     limit = max(1, min(limit, 1000))
     if device_id:
         rows = db.execute(text("""
-            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, created_at
+            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, event, created_at
             FROM temperature_log
             WHERE device_id = :device_id
             ORDER BY created_at DESC
@@ -104,12 +167,36 @@ def get_temperature(device_id: Optional[str] = None, limit: int = 100, db: Sessi
         """), {"device_id": device_id, "limit": limit}).mappings().all()
     else:
         rows = db.execute(text("""
-            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, created_at
+            SELECT id, device_id, temp1, temp2, angle_x, angle_y, angle_z, event, created_at
             FROM temperature_log
             ORDER BY created_at DESC
             LIMIT :limit
         """), {"limit": limit}).mappings().all()
     return {"items": list(rows)}
+
+
+@app.post("/temperature", status_code=201)
+def post_temperature(payload: TempLogIn, db: Session = Depends(get_db)):
+    result = db.execute(text("""
+        INSERT INTO temperature_log (device_id, temp1, temp2, event)
+        VALUES (:device_id, :temp1, :temp2, :event)
+    """), {"device_id": payload.device_id, "temp1": payload.temp1, "temp2": payload.temp2, "event": payload.event})
+    db.commit()
+    return {"ok": True, "id": result.lastrowid, "device_id": payload.device_id}
+
+
+@app.patch("/temperature/{log_id}")
+def update_temperature(log_id: int, payload: TempLogUpdate, db: Session = Depends(get_db)):
+    row = db.execute(text("SELECT id FROM temperature_log WHERE id = :id"), {"id": log_id}).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="temperature_log id not found")
+    db.execute(text("""
+        UPDATE temperature_log
+        SET temp1 = :temp1, temp2 = :temp2, event = :event
+        WHERE id = :id
+    """), {"temp1": payload.temp1, "temp2": payload.temp2, "event": payload.event, "id": log_id})
+    db.commit()
+    return {"ok": True, "id": log_id, "event": payload.event}
 
 
 # ---------- Dummy write APIs (게이트웨이 없이 테스트) ----------
