@@ -122,7 +122,7 @@ def get_temperature_chart(device_id: str, days: int = 1, db: Session = Depends(g
             FROM temperature_log
             WHERE device_id = :device_id
               AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            ORDER BY created_at DESC
+            ORDER BY created_at ASC
         """), {"device_id": device_id, "days": days}).mappings().all()
         return {"items": list(rows), "aggregated": False}
     else:
@@ -132,9 +132,7 @@ def get_temperature_chart(device_id: str, days: int = 1, db: Session = Depends(g
                 device_id,
                 ROUND(AVG(temp1), 2)         AS temp1,
                 ROUND(AVG(temp2), 2)         AS temp2,
-                ROUND(MIN(temp1), 2)         AS temp1_min,
                 ROUND(MAX(temp1), 2)         AS temp1_max,
-                ROUND(MIN(temp2), 2)         AS temp2_min,
                 ROUND(MAX(temp2), 2)         AS temp2_max,
                 NULL                         AS angle_x,
                 NULL                         AS angle_y,
@@ -144,12 +142,12 @@ def get_temperature_chart(device_id: str, days: int = 1, db: Session = Depends(g
                     WHEN SUM(CASE WHEN event = 'warning'      THEN 1 ELSE 0 END) > 0 THEN 'warning'
                     ELSE 'normal'
                 END                          AS event,
-                CONCAT(DATE(created_at), 'T12:00:00') AS created_at
+                CONCAT(DATE(created_at), ' 12:00:00') AS created_at
             FROM temperature_log
             WHERE device_id = :device_id
               AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
             GROUP BY DATE(created_at), device_id
-            ORDER BY created_at DESC
+            ORDER BY created_at ASC
         """), {"device_id": device_id, "days": days}).mappings().all()
         return {"items": list(rows), "aggregated": True}
 
