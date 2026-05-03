@@ -73,7 +73,7 @@ def list_equipments(line_id:Optional[str] = None, db: Session = Depends(get_db))
 
 
 @app.get("/devices")
-def list_devices(equipment_id: str | None = None, db: Session = Depends(get_db)):
+def list_devices(equipment_id: Optional[str] = None, db: Session = Depends(get_db)):
     if equipment_id:
         rows = db.execute(text("""
             SELECT device_id, equipment_id, status, installed_on, last_seen_at, created_at, updated_at
@@ -198,32 +198,6 @@ def update_temperature(log_id: int, payload: TempLogUpdate, db: Session = Depend
 
 
 # ---------- Dummy write APIs (게이트웨이 없이 테스트) ----------
-@app.post("/debug/migrate")
-def run_migration(db: Session = Depends(get_db)):
-    """
-    v3 마이그레이션: event_log 테이블 생성 (이미 존재하면 스킵)
-    서버 배포 후 한 번만 호출하면 됩니다.
-    """
-    db.execute(text("""
-        CREATE TABLE IF NOT EXISTS event_log (
-            event_id     BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
-            device_id    VARCHAR(32)      NOT NULL,
-            event_type   ENUM('warning','disconnected') NOT NULL,
-            event_at     DATETIME         NOT NULL,
-            window_hours TINYINT          NOT NULL DEFAULT 6,
-            resolved_at  DATETIME         NULL,
-            created_at   DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (event_id),
-            INDEX idx_event_device_at (device_id, event_at),
-            INDEX idx_event_unresolved (device_id, resolved_at),
-            CONSTRAINT fk_event_device
-                FOREIGN KEY (device_id) REFERENCES device(device_id)
-                ON UPDATE CASCADE ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """))
-    db.commit()
-    return {"ok": True, "message": "event_log 테이블 생성 완료 (또는 이미 존재)"}
-
 
 @app.post("/debug/bootstrap")
 def bootstrap_minimal(db: Session = Depends(get_db)):
