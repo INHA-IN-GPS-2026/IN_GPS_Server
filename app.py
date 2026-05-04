@@ -134,6 +134,8 @@ def get_temperature_chart(device_id: str, days: int = 1, db: Session = Depends(g
                 ROUND(AVG(temp2), 2)         AS temp2,
                 ROUND(MAX(temp1), 2)         AS temp1_max,
                 ROUND(MAX(temp2), 2)         AS temp2_max,
+                ROUND(MIN(temp1), 2)         AS temp1_min,
+                ROUND(MIN(temp2), 2)         AS temp2_min,
                 NULL                         AS angle_x,
                 NULL                         AS angle_y,
                 NULL                         AS angle_z,
