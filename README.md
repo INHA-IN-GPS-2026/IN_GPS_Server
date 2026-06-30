@@ -6,7 +6,7 @@ IN-GPS server 초기버전입니다. python으로 작성했으며 mqtt 프로토
  - app.py
  - db.py
  - mqtt_subsriber.py
- - requirement.txt
+ - requirement.txt  
 
 ## Features
 - DummyData 송신 후 로그확인
