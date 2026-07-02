@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 from db import get_db
 from typing import Optional
 
@@ -366,12 +366,96 @@ def update_sensor(log_id: int, payload: SensorLogUpdate, db: Session = Depends(g
 @app.get("/temperature/chart")
 def legacy_temperature_chart(
     device_id: str,
-    days: int = 1,
-    bucket: str = Query("auto", pattern="^(auto|raw|1m|5m|1h|1d)$"),
+    days: int = Query(1, ge=1, le=366, description="최근 N일 (start/end 미지정 시)"),
+    start: Optional[str] = Query(None, description="조회 시작일 YYYY-MM-DD (end와 함께 사용)"),
+    end: Optional[str] = Query(None, description="조회 종료일 YYYY-MM-DD (포함, start와 함께 사용)"),
     db: Session = Depends(get_db),
 ):
-    """모바일 측 코드가 기존 경로를 계속 쓸 수 있도록 /chart/{device_id}로 위임."""
-    return get_chart(device_id=device_id, days=days, metric="all", bucket=bucket, db=db)
+    """
+    모바일 차트용 items 응답. 기간(start~end) 또는 최근 N일(days) 조회.
+
+    버킷 규칙 (span = 조회 구간 일수):
+      span <= 7  → 분(1m) 평균 rows  (클라이언트가 시간/일 단위로 재집계)
+      span >  7  → 일(1d) 집계 rows  (temp1_max/min/avg 포함, 주/월 뷰용)
+
+    응답: {"items":[{created_at, temp1, temp1_max, temp1_min, temp2, temp2_max,
+                      temp2_min, rms_x, rms_y, rms_z, event}, ...], ...}  (created_at ASC)
+    """
+    # ── 조회 구간(window) 결정 ───────────────────────────────────────
+    params = {"device_id": device_id}
+    if start and end:
+        try:
+            start_d = datetime.strptime(start, "%Y-%m-%d").date()
+            end_d   = datetime.strptime(end,   "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start/end는 YYYY-MM-DD 형식이어야 합니다.")
+        if end_d < start_d:
+            raise HTTPException(status_code=400, detail="end는 start보다 빠를 수 없습니다.")
+        span_days = (end_d - start_d).days + 1
+        params["start_dt"] = f"{start_d} 00:00:00"
+        params["end_dt"]   = f"{end_d + timedelta(days=1)} 00:00:00"   # 종료일 포함(다음날 0시 미만)
+        where = "device_id = :device_id AND created_at >= :start_dt AND created_at < :end_dt"
+    else:
+        span_days = days
+        params["days"] = days
+        where = "device_id = :device_id AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)"
+
+    daily = span_days > 7
+    event_case = ("CASE WHEN SUM(event='disconnected')>0 THEN 'disconnected' "
+                  "WHEN SUM(event='warning')>0 THEN 'warning' ELSE 'normal' END AS event")
+
+    if daily:
+        sql = f"""
+            SELECT DATE_FORMAT(created_at, '%Y-%m-%d 12:00:00') AS created_at,
+                   ROUND(AVG(temp1),2) AS temp1, ROUND(MAX(temp1),2) AS temp1_max, ROUND(MIN(temp1),2) AS temp1_min,
+                   ROUND(AVG(temp2),2) AS temp2, ROUND(MAX(temp2),2) AS temp2_max, ROUND(MIN(temp2),2) AS temp2_min,
+                   ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
+                   {event_case}
+            FROM temperature_log
+            WHERE {where}
+            GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+            ORDER BY created_at ASC
+        """
+    else:
+        sql = f"""
+            SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:00') AS created_at,
+                   ROUND(AVG(temp1),2) AS temp1, ROUND(AVG(temp2),2) AS temp2,
+                   ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
+                   {event_case}
+            FROM temperature_log
+            WHERE {where}
+            GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:00')
+            ORDER BY created_at ASC
+        """
+    rows = db.execute(text(sql), params).mappings().all()
+    return {
+        "device_id": device_id,
+        "bucket": "1d" if daily else "1m",
+        "span_days": span_days,
+        "start": start, "end": end,
+        "count": len(rows),
+        "items": [dict(r) for r in rows],
+    }
+
+
+@app.get("/temperature/dates")
+def temperature_available_dates(
+    device_id: str,
+    days: int = Query(400, ge=1, le=1000, description="최근 N일 내에서 데이터가 있는 날짜 조회"),
+    db: Session = Depends(get_db),
+):
+    """
+    해당 디바이스에 데이터가 존재하는 '날짜' 목록(YYYY-MM-DD).
+    모바일 캘린더에서 데이터 없는 날짜를 비활성/표시하는 데 사용.
+    """
+    rows = db.execute(text("""
+        SELECT DISTINCT DATE(created_at) AS d
+        FROM temperature_log
+        WHERE device_id = :device_id
+          AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+        ORDER BY d ASC
+    """), {"device_id": device_id, "days": days}).mappings().all()
+    return {"device_id": device_id, "dates": [str(r["d"]) for r in rows]}
 
 
 @app.get("/temperature")
@@ -440,7 +524,7 @@ def insert_dummy_log(payload: DummyLogIn, db: Session = Depends(get_db)):
 @app.get("/export/sensor.csv")
 def export_sensor_csv(
     device_id: Optional[str] = Query(None, description="특정 디바이스만. 미지정 시 전체"),
-    limit: int = Query(1000, ge=1, le=1000, description="최대 1000개"),
+    limit: int = Query(2500, ge=1, le=2500, description="최대 2500개"),
     username: str = Depends(current_user),   # 로그인 필수
     db: Session = Depends(get_db),
 ):
