@@ -419,7 +419,8 @@ def legacy_temperature_chart(
     else:
         sql = f"""
             SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:00') AS created_at,
-                   ROUND(AVG(temp1),2) AS temp1, ROUND(AVG(temp2),2) AS temp2,
+                   ROUND(AVG(temp1),2) AS temp1, ROUND(MAX(temp1),2) AS temp1_max, ROUND(MIN(temp1),2) AS temp1_min,
+                   ROUND(AVG(temp2),2) AS temp2, ROUND(MAX(temp2),2) AS temp2_max, ROUND(MIN(temp2),2) AS temp2_min,
                    ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
                    {event_case}
             FROM temperature_log
