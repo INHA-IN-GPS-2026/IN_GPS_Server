@@ -10,6 +10,25 @@ from sqlalchemy import text
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 온도 유효 범위: 물리적으로 비정상인 값(써미스터 개방/단락, 전기 노이즈 글리치)을 거른다.
+# 관측된 실데이터는 <50°C. 명백한 글리치(~100°C+)만 걸러내되 실제 과열 여지를 남기려 상한을 넉넉히 둠.
+# 더 엄격히 하려면 VALID_TEMP_MAX_C를 낮출 것(예: 50~60).
+VALID_TEMP_MIN_C = -20.0
+VALID_TEMP_MAX_C = 80.0
+
+
+def _valid_temp(v):
+    """유효 범위를 벗어난 온도는 None 반환(→ DB에 NULL 저장, 집계에서 자동 제외)."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f < VALID_TEMP_MIN_C or f > VALID_TEMP_MAX_C:
+        return None
+    return f
+
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 # 토픽 구조 (와일드카드 # 로 통합 구독):
@@ -122,8 +141,12 @@ def handle_sensor(payload: dict):
             logger.warning("[MQTT] device_id/esp_byte_id 매핑 실패: %s", payload)
             return
 
-        temp1 = payload.get("temp1")
-        temp2 = payload.get("temp2")
+        temp1 = _valid_temp(payload.get("temp1"))
+        temp2 = _valid_temp(payload.get("temp2"))
+        if temp1 is None and payload.get("temp1") is not None:
+            logger.warning("[MQTT] temp1 이상치 무시(→NULL): %s", payload.get("temp1"))
+        if temp2 is None and payload.get("temp2") is not None:
+            logger.warning("[MQTT] temp2 이상치 무시(→NULL): %s", payload.get("temp2"))
         rms_x = payload.get("rms_x")
         rms_y = payload.get("rms_y")
         rms_z = payload.get("rms_z")
