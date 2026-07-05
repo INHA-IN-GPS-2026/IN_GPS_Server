@@ -4,6 +4,7 @@ import io
 import os
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, Cookie
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -16,6 +17,8 @@ from typing import Optional
 import auth
 
 app = FastAPI(title="IN-GPS API", version="0.3.0")
+# JSON 응답 gzip 압축 (모바일 차트 페이로드 70~80% 절감; OkHttp가 자동 협상)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -369,14 +372,16 @@ def legacy_temperature_chart(
     days: int = Query(1, ge=1, le=366, description="최근 N일 (start/end 미지정 시)"),
     start: Optional[str] = Query(None, description="조회 시작일 YYYY-MM-DD (end와 함께 사용)"),
     end: Optional[str] = Query(None, description="조회 종료일 YYYY-MM-DD (포함, start와 함께 사용)"),
+    bucket: Optional[str] = Query(None, pattern="^(1m|1h|1d)$",
+                                  description="집계 해상도. 미지정 시 span 규칙 적용"),
     db: Session = Depends(get_db),
 ):
     """
     모바일 차트용 items 응답. 기간(start~end) 또는 최근 N일(days) 조회.
 
-    버킷 규칙 (span = 조회 구간 일수):
-      span <= 7  → 분(1m) 평균 rows  (클라이언트가 시간/일 단위로 재집계)
-      span >  7  → 일(1d) 집계 rows  (temp1_max/min/avg 포함, 주/월 뷰용)
+    버킷: bucket 파라미터가 있으면 그 해상도로 서버 집계(권장 — 페이로드 최소화).
+      미지정 시 레거시 규칙: span <= 7 → 1m, span > 7 → 1d.
+      앱 기준 권장값: 1일 뷰=1m(분단위 곡선), 1주~기간=1d.
 
     응답: {"items":[{created_at, temp1, temp1_max, temp1_min, temp2, temp2_max,
                       temp2_min, rms_x, rms_y, rms_z, event}, ...], ...}  (created_at ASC)
@@ -400,38 +405,34 @@ def legacy_temperature_chart(
         params["days"] = days
         where = "device_id = :device_id AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)"
 
-    daily = span_days > 7
+    # 해상도 결정: 명시된 bucket 우선, 없으면 레거시 span 규칙
+    resolved = bucket if bucket else ("1d" if span_days > 7 else "1m")
+    # 표시용 created_at / GROUP BY 키 (화이트리스트라 f-string 삽입 안전)
+    bucket_fmt = {
+        "1m": ("%Y-%m-%d %H:%i:00", "%Y-%m-%d %H:%i:00"),
+        "1h": ("%Y-%m-%d %H:00:00", "%Y-%m-%d %H"),
+        "1d": ("%Y-%m-%d 12:00:00", "%Y-%m-%d"),
+    }
+    disp_fmt, group_fmt = bucket_fmt[resolved]
+
     event_case = ("CASE WHEN SUM(event='disconnected')>0 THEN 'disconnected' "
                   "WHEN SUM(event='warning')>0 THEN 'warning' ELSE 'normal' END AS event")
 
-    if daily:
-        sql = f"""
-            SELECT DATE_FORMAT(created_at, '%Y-%m-%d 12:00:00') AS created_at,
-                   ROUND(AVG(temp1),2) AS temp1, ROUND(MAX(temp1),2) AS temp1_max, ROUND(MIN(temp1),2) AS temp1_min,
-                   ROUND(AVG(temp2),2) AS temp2, ROUND(MAX(temp2),2) AS temp2_max, ROUND(MIN(temp2),2) AS temp2_min,
-                   ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
-                   {event_case}
-            FROM temperature_log
-            WHERE {where}
-            GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
-            ORDER BY created_at ASC
-        """
-    else:
-        sql = f"""
-            SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:00') AS created_at,
-                   ROUND(AVG(temp1),2) AS temp1, ROUND(MAX(temp1),2) AS temp1_max, ROUND(MIN(temp1),2) AS temp1_min,
-                   ROUND(AVG(temp2),2) AS temp2, ROUND(MAX(temp2),2) AS temp2_max, ROUND(MIN(temp2),2) AS temp2_min,
-                   ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
-                   {event_case}
-            FROM temperature_log
-            WHERE {where}
-            GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:00')
-            ORDER BY created_at ASC
-        """
+    sql = f"""
+        SELECT DATE_FORMAT(created_at, '{disp_fmt}') AS created_at,
+               ROUND(AVG(temp1),2) AS temp1, ROUND(MAX(temp1),2) AS temp1_max, ROUND(MIN(temp1),2) AS temp1_min,
+               ROUND(AVG(temp2),2) AS temp2, ROUND(MAX(temp2),2) AS temp2_max, ROUND(MIN(temp2),2) AS temp2_min,
+               ROUND(AVG(rms_x)) AS rms_x, ROUND(AVG(rms_y)) AS rms_y, ROUND(AVG(rms_z)) AS rms_z,
+               {event_case}
+        FROM temperature_log
+        WHERE {where}
+        GROUP BY DATE_FORMAT(created_at, '{group_fmt}')
+        ORDER BY created_at ASC
+    """
     rows = db.execute(text(sql), params).mappings().all()
     return {
         "device_id": device_id,
-        "bucket": "1d" if daily else "1m",
+        "bucket": resolved,
         "span_days": span_days,
         "start": start, "end": end,
         "count": len(rows),
@@ -463,8 +464,19 @@ def temperature_available_dates(
 def legacy_temperature(
     device_id: Optional[str] = None,
     limit: int = 100,
+    since: Optional[str] = Query(None, description="이 시각(YYYY-MM-DD HH:MM:SS) 이후 행만 (증분 폴링용, ASC)"),
     db: Session = Depends(get_db),
 ):
+    # 증분 폴링: since 이후 새 행만 ASC로 반환 — 실시간 1초 폴링 페이로드 최소화.
+    if since and device_id:
+        rows = db.execute(text("""
+            SELECT id, device_id, temp1, temp2, rms_x, rms_y, rms_z, event, created_at
+            FROM temperature_log
+            WHERE device_id = :device_id AND created_at > :since
+            ORDER BY created_at ASC
+            LIMIT :limit
+        """), {"device_id": device_id, "since": since, "limit": limit}).mappings().all()
+        return {"items": list(rows)}
     return get_sensor(device_id=device_id, limit=limit, db=db)
 
 

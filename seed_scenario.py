@@ -6,8 +6,12 @@ seed_scenario.py — UI 검증용 1년치 합성 센서 데이터 주입.
 
 사용법 (in_gps_server 폴더에서):
     python seed_scenario.py                      # 미리보기: 생성될 행 수·통계만 출력
-    python seed_scenario.py --apply              # 실제 INSERT
-    python seed_scenario.py --device esp_32_1 --days 365 --apply
+    python seed_scenario.py --apply              # engine으로 직접 INSERT (DB 자격증명 필요)
+    python seed_scenario.py --sql seed.sql       # SQL 파일 생성 → sudo mysql ingps < seed.sql
+    python seed_scenario.py --device esp_32_1 --days 365 --sql seed.sql
+
+root가 unix_socket 인증(비밀번호 TCP 불가)인 서버에서는 --sql 모드를 쓰고
+sudo mysql로 주입하는 것이 가장 간단하다.
 
 시나리오 구성 (UI 확인 포인트):
   · 계절 주기(여름↑) + 일주기(주간 가동 09~18시 발열) + 노이즈
@@ -111,12 +115,28 @@ def build_rows(device_id: str, days: int, seed: int = 42):
     return rows
 
 
+def write_sql(rows, path):
+    """INSERT문 SQL 파일 생성 (500행 단위 multi-row INSERT)."""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("USE ingps;\n")
+        for i in range(0, len(rows), 500):
+            chunk = rows[i:i + 500]
+            values = ",\n".join(
+                "('{device_id}', {temp1}, {temp2}, {rms_x}, {rms_y}, {rms_z}, "
+                "'{event}', '{created_at}')".format(**r)
+                for r in chunk)
+            f.write("INSERT INTO temperature_log "
+                    "(device_id, temp1, temp2, rms_x, rms_y, rms_z, event, created_at) "
+                    "VALUES\n" + values + ";\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="esp_32_1")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--sql", metavar="PATH", help="INSERT SQL 파일로 출력(직접 접속 안 함)")
     args = ap.parse_args()
 
     rows = build_rows(args.device, args.days, args.seed)
@@ -126,8 +146,16 @@ def main():
     print(f"temp1 범위 {min(t1):.1f} ~ {max(t1):.1f}℃ · warning {warn}행 · "
           f"disconnected {sum(1 for r in rows if r['event'] == 'disconnected')}행")
 
+    if args.sql:
+        write_sql(rows, args.sql)
+        print(f"\nSQL 파일 생성됨: {args.sql}")
+        print(f"주입:  sudo mysql ingps < {args.sql}")
+        return
+
     if not args.apply:
-        print("\n미리보기만 실행됨. 실제 주입:  python seed_scenario.py --apply")
+        print("\n미리보기만 실행됨.")
+        print("  SQL 파일로:  python3 seed_scenario.py --sql seed.sql  →  sudo mysql ingps < seed.sql")
+        print("  직접 주입:   python3 seed_scenario.py --apply  (DB_USER/DB_PASS 필요)")
         return
 
     from sqlalchemy import text
