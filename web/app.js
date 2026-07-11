@@ -91,6 +91,69 @@ const INGPS = (() => {
       window.location.href = "/export/sensor.csv?" + qs.toString();
       showMsg("다운로드를 시작했습니다.", "ok");
     });
+
+    $("gwhealth-btn").addEventListener("click", loadGatewayHealth);
+  }
+
+  // ── Gateway Health 로그 조회/렌더 ──
+  function esc(v) {
+    return String(v ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function fmtUptime(sec) {
+    const s = Number(sec);
+    if (!Number.isFinite(s)) return "-";
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = Math.floor(s % 60);
+    return `${h}h ${m}m ${r}s`;
+  }
+
+  function setGwMsg(text, kind) {
+    const el = $("gwhealth-msg");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "msg " + (kind || "");
+  }
+
+  async function loadGatewayHealth() {
+    const box = $("gwhealth-table");
+    setGwMsg("불러오는 중…", "ok");
+    const r = await api("/gateway_health?limit=100");
+    if (!r.ok || !r.body || !r.body.items) {
+      setGwMsg("조회에 실패했습니다.", "error");
+      return;
+    }
+    const items = r.body.items;
+    if (items.length === 0) {
+      setGwMsg("기록이 없습니다.", "ok");
+      box.innerHTML = "";
+      return;
+    }
+    setGwMsg(items.length + "건 조회됨", "ok");
+    let html =
+      '<table class="gwh-table"><thead><tr>' +
+      "<th>시각</th><th>Gateway</th><th>Event</th>" +
+      "<th>init</th><th>mqtt_conn</th><th>pub</th><th>fail</th><th>uptime</th>" +
+      "</tr></thead><tbody>";
+    for (const it of items) {
+      const failCls = Number(it.prev_fail_count) > 0 ? ' class="fail"' : "";
+      html +=
+        "<tr>" +
+        `<td>${esc(it.created_at)}</td>` +
+        `<td>${esc(it.gateway_id)}</td>` +
+        `<td>${esc(it.event)}</td>` +
+        `<td>${esc(it.prev_init_result)}</td>` +
+        `<td>${esc(it.prev_mqtt_conn_result)}</td>` +
+        `<td>${esc(it.prev_pub_count)}</td>` +
+        `<td${failCls}>${esc(it.prev_fail_count)}</td>` +
+        `<td>${fmtUptime(it.prev_uptime_sec)}</td>` +
+        "</tr>";
+    }
+    html += "</tbody></table>";
+    box.innerHTML = html;
   }
 
   return { initLogin, initSignup, initDashboard };

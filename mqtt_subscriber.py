@@ -34,6 +34,7 @@ MQTT_PORT = 1883
 # 토픽 구조 (와일드카드 # 로 통합 구독):
 #   ingps/sensor          : ESP RMS+온도 페이로드 (게이트웨이가 mfg_data 파싱해 publish)
 #   ingps/mvpmodel        : 레거시 (기존 호환용)
+#   ingps/gateway_health  : STM32 게이트웨이 crash_report (재시작 직후 직전 실행 요약)
 #   ingps/<gateway>/<dev> : gateway/device hello (last_seen 갱신)
 MQTT_TOPIC = "ingps/#"
 
@@ -97,6 +98,61 @@ def handle_mfg_data(payload: dict):
     except Exception as e:
         db.rollback()
         logger.error("[MQTT] DB 처리 실패: %s", e)
+    finally:
+        db.close()
+
+
+def handle_gateway_health(payload: dict):
+    """
+    STM32 Gateway crash_report 처리 (재시작 직후 직전 실행 요약).
+
+    토픽: ingps/gateway_health
+    {
+        "gateway_id": "GW_LN01",
+        "event": "crash_report",
+        "prev_init_result": 0,
+        "prev_mqtt_conn_result": 0,
+        "prev_pub_count": 1234,
+        "prev_fail_count": 3,
+        "prev_uptime_sec": 86400
+    }
+    """
+    db = SessionLocal()
+    try:
+        gateway_id = payload.get("gateway_id")
+        if not gateway_id:
+            logger.warning("[MQTT] gateway_health gateway_id 누락: %s", payload)
+            return
+
+        db.execute(text("""
+            INSERT INTO gateway_health_log
+                (gateway_id, event,
+                 prev_init_result, prev_mqtt_conn_result,
+                 prev_pub_count, prev_fail_count, prev_uptime_sec, created_at)
+            VALUES
+                (:gateway_id, :event,
+                 :prev_init_result, :prev_mqtt_conn_result,
+                 :prev_pub_count, :prev_fail_count, :prev_uptime_sec, NOW())
+        """), {
+            "gateway_id":            gateway_id,
+            "event":                 payload.get("event", "crash_report"),
+            "prev_init_result":      payload.get("prev_init_result"),
+            "prev_mqtt_conn_result": payload.get("prev_mqtt_conn_result"),
+            "prev_pub_count":        payload.get("prev_pub_count"),
+            "prev_fail_count":       payload.get("prev_fail_count"),
+            "prev_uptime_sec":       payload.get("prev_uptime_sec"),
+        })
+        db.commit()
+        logger.info(
+            "[MQTT] gateway_health ✅ | gw=%s ev=%s uptime=%s pub=%s fail=%s",
+            gateway_id, payload.get("event"),
+            payload.get("prev_uptime_sec"),
+            payload.get("prev_pub_count"), payload.get("prev_fail_count"),
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error("[MQTT] gateway_health 저장 실패: %s | payload=%s", e, payload)
     finally:
         db.close()
 
@@ -224,6 +280,8 @@ def on_message(client, userdata, msg):
         handle_sensor(payload)
     elif msg.topic == "ingps/mvpmodel":
         handle_temperature_legacy(payload)
+    elif msg.topic == "ingps/gateway_health":
+        handle_gateway_health(payload)
     else:
         handle_mfg_data(payload)
 

@@ -365,6 +365,40 @@ def update_sensor(log_id: int, payload: SensorLogUpdate, db: Session = Depends(g
     return {"ok": True, "id": log_id, "event": payload.event}
 
 
+# ---------- Gateway Health (게이트웨이 crash_report) ----------
+@app.get("/gateway_health")
+def get_gateway_health(
+    gateway_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    """
+    게이트웨이(STM32)가 재시작 직후 보내는 crash_report 조회.
+    소스 토픽: ingps/gateway_health → gateway_health_log 테이블.
+    최신순(created_at DESC)으로 최대 limit개 반환.
+    """
+    if gateway_id:
+        rows = db.execute(text("""
+            SELECT id, gateway_id, event,
+                   prev_init_result, prev_mqtt_conn_result,
+                   prev_pub_count, prev_fail_count, prev_uptime_sec, created_at
+            FROM gateway_health_log
+            WHERE gateway_id = :gateway_id
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {"gateway_id": gateway_id, "limit": limit}).mappings().all()
+    else:
+        rows = db.execute(text("""
+            SELECT id, gateway_id, event,
+                   prev_init_result, prev_mqtt_conn_result,
+                   prev_pub_count, prev_fail_count, prev_uptime_sec, created_at
+            FROM gateway_health_log
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {"limit": limit}).mappings().all()
+    return {"items": list(rows)}
+
+
 # ---------- Legacy aliases (기존 /temperature/* 호환) ----------
 @app.get("/temperature/chart")
 def legacy_temperature_chart(

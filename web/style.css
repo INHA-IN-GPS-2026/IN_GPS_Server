@@ -153,3 +153,26 @@ input:focus, select:focus { border-color: var(--primary); }
 .card h2 { margin: 0 0 4px; font-size: 17px; }
 .card .desc { margin: 0 0 20px; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
 .hint { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+
+/* ── Gateway Health 로그 테이블 ── */
+.table-wrap { margin-top: 16px; overflow-x: auto; }
+.gwh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.gwh-table th, .gwh-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--divider);
+}
+.gwh-table thead th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+}
+.gwh-table tbody tr:hover { background: var(--primary-light); }
+.gwh-table td.fail { color: var(--critical-text); font-weight: 600; }
