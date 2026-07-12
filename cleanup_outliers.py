@@ -15,7 +15,7 @@ from sqlalchemy import text
 from db import engine
 
 TMIN = -20
-TMAX = 100
+TMAX = 130
 
 
 def main(apply: bool = False):
